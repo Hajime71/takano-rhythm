@@ -4,6 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 <title>高野さん、それ聞きました</title>
+<meta property="og:title" content="高野さん、それ聞きました">
+<meta property="og:description" content="高野さんの長話に相槌を打つリズムゲーム — へー / まじすか / ちなみに?">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://hajime71.github.io/takano-rhythm/">
+<meta property="og:image" content="https://hajime71.github.io/takano-rhythm/screenshot-title.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="高野さん、それ聞きました">
+<meta name="twitter:image" content="https://hajime71.github.io/takano-rhythm/screenshot-title.png">
 <style>
   :root{
     --sky-top:#141d3d;
@@ -187,7 +195,7 @@ var LANE_DEEP  = ['#1c5f73', '#7d5220', '#7d3350'];
 
 /* ============================ difficulty ============================ */
 var DIFF_LABEL = { easy:'かんたん', normal:'ふつう', hard:'むずかしい' };
-var APPROACH_BY_DIFF = { easy: 1.5, normal: 1.15, hard: 0.72 };  // seconds spawn→judge line
+var APPROACH_BY_DIFF = { easy: 1.5, normal: 1.0, hard: 0.72 };  // seconds spawn→judge line
 function currentSpeed(){
   var ap = APPROACH_BY_DIFF[game.difficulty] || 1.35;
   return (JUDGE_Y - FIELD_TOP + 46) / ap;
@@ -220,9 +228,21 @@ function densifyPat(pat){
     return c.join('');
   });
 }
+function densifyPatLight(pat){
+  return pat.map(function(row, ri){
+    var c = row.split('');
+    for (var i = 1; i < 8; i += 2){
+      if (c[i] === '.' && (ri + i) % 3 === 0){
+        c[i] = String(((ri * 3 + i) % 3) + 1);
+      }
+    }
+    return c.join('');
+  });
+}
 function patForDifficulty(pat){
   if (game.difficulty === 'easy') return thinPat(pat);
   if (game.difficulty === 'hard') return densifyPat(pat);
+  if (game.difficulty === 'normal') return densifyPatLight(pat);
   return pat;
 }
 /* hard mode: sprinkle in simultaneous two-lane taps (deterministic, ~1 in 5
@@ -268,6 +288,7 @@ var CHARTS = [
     bass: [0, 0, 5, 5, 3, 3, 7, 7],
     lead: [null, 12, null, 15, null, 12, null, 10],
     cameo: [0.4, 0.8],
+    special: [ {frac:0.6, lane:1} ],
     lines: [
       '福岡タワーがさー',
       'ちなみに234mな',
@@ -294,6 +315,7 @@ var CHARTS = [
     bass: [0, 0, 3, 3, 8, 8, 5, 5],
     lead: [12, null, 15, null, 17, 15, null, 12],
     cameo: [0.35, 0.7],
+    special: [ {frac:0.5, lane:2}, {frac:0.85, lane:0} ],
     lines: [
       '日曜な、朝イチで行ってさー',
       'ちなみに端材コーナーが熱い',
@@ -321,6 +343,7 @@ var CHARTS = [
     bass: [0, 2, 3, 5, 7, 8, 10, 11],
     lead: [12, 15, 17, 19, 17, 15, 19, 17],
     cameo: [0.25, 0.55, 0.85],
+    special: [ {frac:0.35, lane:0}, {frac:0.65, lane:2}, {frac:0.92, lane:1} ],
     lines: [
       '先週コンペでさー',
       'ドライバー変えたんよ',
@@ -573,7 +596,9 @@ var game = {
   shake: 0,
   reaction: { kind: null, time: -9 },  // 'chi' (trap misfire) | 'slump' (miss/dropped hold)
   trapHit: 0,
+  sulkStart: -9,
   cameo: { list: [], next: 0, win: null },  // 実さん乱入イベント
+  cameoStreak: 0, comboBreakPopup: null,
   costume: false, tripleHoldStart: null, costumeToast: -9,
   lastHeartbeat: -9,
   voiceOn: true,
@@ -619,6 +644,10 @@ function startStage(idx){
   if (game.difficulty === 'hard') built.notes = addDoubles(built.notes, 4);
   else if (game.difficulty === 'normal') built.notes = addDoubles(built.notes, 7);
   else built.notes = addDoubles(built.notes, 14);
+  (chart.special || []).forEach(function(s){
+    built.notes.push({ lane: s.lane, t: s.frac * built.len, type: 'special', hit: false, dead: false });
+  });
+  built.notes.sort(function(a,b){ return a.t - b.t; });
   game.notes = built.notes;
   game.songLen = built.len;
   game.total = 0;
@@ -634,6 +663,7 @@ function startStage(idx){
     list: cameoFracs.map(function(f){ return f * built.len; }),
     next: 0, win: null
   };
+  game.cameoStreak = 0; game.comboBreakPopup = null;
   particles.length = 0;
   laneHeld = [false,false,false];
   pointerLane = {};
@@ -657,8 +687,19 @@ function setJudge(text, kind){
   game.judgeText = text; game.judgeKind = kind; game.judgeTime = now();
 }
 function breakCombo(){
+  if (game.combo >= 10){
+    game.comboBreakPopup = { combo: game.combo, time: now() };
+    sfxComboBreak();
+  }
   if (game.aniki && game.combo >= 20) game.flash = 0.25;
   game.combo = 0; game.aniki = false;
+}
+function sfxComboBreak(){
+  if (!actx) return;
+  var t = now();
+  beep(t, 300, 0.18, 'sawtooth', 0.16);
+  beep(t + 0.12, 220, 0.18, 'sawtooth', 0.15);
+  beep(t + 0.24, 150, 0.3, 'sawtooth', 0.15);
 }
 function gainCombo(){
   game.combo++;
@@ -667,7 +708,29 @@ function gainCombo(){
 }
 function moodAdd(v){
   game.mood = Math.max(0, Math.min(100, game.mood + v));
-  if (game.mood <= 0 && game.mode === 'play') endStage(false);
+  if (game.mood <= 0 && game.mode === 'play') startSulk();
+}
+function startSulk(){
+  game.mode = 'sulk';
+  game.sulkStart = now();
+  bgm.on = false;
+  game.shake = 0.6;
+  if (actx){
+    var t0 = now();
+    var s = actx.createBufferSource(); s.buffer = getNoise();
+    var f = actx.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = 750; f.Q.value = 1.1;
+    var g = actx.createGain();
+    g.gain.setValueAtTime(0.001, t0);
+    g.gain.exponentialRampToValueAtTime(0.28, t0 + 0.05);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.4);
+    s.connect(f); f.connect(g); g.connect(master);
+    s.start(t0); s.stop(t0 + 0.42);
+    setTimeout(function(){
+      if (!actx) return;
+      kick(now());
+      beep(now(), 90, 0.25, 'square', 0.22);
+    }, 1500);
+  }
 }
 function burst(lane, color, n){
   var cx = LANES_X[lane] + LANE_W/2;
@@ -680,6 +743,15 @@ function burst(lane, color, n){
   }
 }
 
+function spawnChainBonus(startLane){
+  var st = songTime();
+  for (var i = 0; i < 3; i++){
+    game.notes.push({ lane: (startLane + i) % 3, t: st + 0.45 + i*0.38, type: 'chainbonus', hit: false, dead: false });
+  }
+  game.notes.sort(function(a,b){ return a.t - b.t; });
+  setJudge('実さんチェーン!', 'perfect');
+}
+
 function pressLane(lane){
   if (game.mode !== 'play' && game.mode !== 'count') return;
   laneHeld[lane] = true; laneFx[lane] = 1;
@@ -689,6 +761,11 @@ function pressLane(lane){
     addScore(250); moodAdd(6);
     setJudge('実!', 'perfect'); sfxHit('aniki');
     burst(0, '#ffd75e', 6); burst(1, '#ffd75e', 6); burst(2, '#ffd75e', 6);
+    game.cameoStreak++;
+    if (game.cameoStreak >= 2){
+      game.cameoStreak = 0;
+      spawnChainBonus(lane);
+    }
   }
   var t = songTime(), spd = currentSpeed();
   var best = null, bestPx = 99999;
@@ -707,6 +784,23 @@ function pressLane(lane){
     setJudge('叩いた', 'bad'); sfxHit('trap');
     breakCombo(); moodAdd(-16); game.shake = 0.4;
     game.trapHit++; game.reaction = { kind: 'chi', time: now() };
+    return;
+  }
+  if (best.type === 'special'){
+    best.hit = true; best.dead = true;
+    game.counts.perfect++;
+    addScore(700); gainCombo(); moodAdd(10);
+    setJudge('神相槌!', 'perfect'); sfxHit('aniki');
+    voiceLine(['hee','majisuka','chinamini'][lane]);
+    burst(lane, '#ffd75e', 20);
+    return;
+  }
+  if (best.type === 'chainbonus'){
+    best.hit = true; best.dead = true;
+    addScore(150); moodAdd(4);
+    setJudge('ナイス!', 'great'); sfxHit('great');
+    voiceLine(['hee','majisuka','chinamini'][lane]);
+    burst(lane, '#6fd3e8', 10);
     return;
   }
   var kind, base;
@@ -769,10 +863,21 @@ function updateNotes(dt){
         setJudge('聞き流した', 'great'); }
       continue;
     }
+    if (n.type === 'chainbonus'){
+      if (!n.hit && t > n.t + missT) n.dead = true;
+      continue;
+    }
     if (!n.hit && t > n.t + missT){
       n.dead = true; game.counts.miss++;
-      breakCombo(); moodAdd(-8);
-      setJudge('スルー', 'bad'); sfxHit('miss');
+      breakCombo();
+      if (n.type === 'special'){
+        game.score = Math.max(0, game.score - 250);
+        moodAdd(-20); game.shake = 0.35;
+        setJudge('もったいない!', 'bad'); sfxHit('trap');
+      } else {
+        moodAdd(-8);
+        setJudge('スルー', 'bad'); sfxHit('miss');
+      }
       game.reaction = { kind: 'slump', time: now() };
     }
   }
@@ -786,7 +891,7 @@ function updateNotes(dt){
   var cm = game.cameo;
   if (cm.win){
     var age = t - cm.win.start;
-    if (!cm.win.resolved && age > 1.1) cm.win = null;
+    if (!cm.win.resolved && age > 1.1){ cm.win = null; game.cameoStreak = 0; }
     else if (cm.win.resolved && age > 1.5) cm.win = null;
   } else if (cm.next < cm.list.length && t >= cm.list[cm.next]){
     cm.win = { start: t, resolved: false };
@@ -934,6 +1039,14 @@ function drawTakano(x, y, s, t){
   var talk = game.mode === 'play' ? (0.5 + 0.5*Math.sin(t*11)) : 0.2;
   var bob = Math.sin(t * 3.1) * 2;
 
+  var sulkAge = game.mode === 'sulk' ? now() - game.sulkStart : -1;
+  if (sulkAge >= 0){
+    var jolt = sulkAge < 0.35 ? Math.sin(sulkAge*60) * (1 - sulkAge/0.35) * 5 : 0;
+    var walkT = Math.max(0, Math.min(1, (sulkAge - 0.5) / 1.4));
+    ctx.translate(jolt - walkT*150, walkT*6);
+    ctx.globalAlpha = 1 - Math.max(0, (sulkAge - 1.7) / 0.5);
+  }
+
   var reactAge = now() - game.reaction.time;
   var reactT = Math.max(0, 1 - reactAge / 0.45);
   var droop = game.reaction.kind === 'slump' ? reactT * 9 : 0;
@@ -1014,13 +1127,39 @@ function drawTakano(x, y, s, t){
 }
 
 function drawBubble(t){
+  if (game.mode === 'sulk'){
+    var sAge = now() - game.sulkStart;
+    if (sAge > 1.6) return; // he's off-screen, no bubble follows him out
+    var sTxt = sAge < 0.5 ? '……' : sAge < 1.1 ? 'もう知らん' : '帰るわ';
+    ctx.save();
+    var sx = 108, sy = 108, sw = 176, sh = 46;
+    ctx.fillStyle = 'rgba(255,120,120,.94)';
+    rr(sx, sy, sw, sh, 12); ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(sx - 1, sy + 22); ctx.lineTo(sx - 14, sy + 30); ctx.lineTo(sx - 1, sy + 36);
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#2a1010';
+    ctx.font = '700 14px "Hiragino Kaku Gothic ProN",sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(sTxt, sx + sw/2, sy + sh/2);
+    ctx.restore();
+    return;
+  }
   var chart = CHARTS[game.stage];
   var txt = chart.lines[game.lineIdx] || '';
   if (game.aniki) txt = ['で、その現場なんやけど', '図面、俺が引いとくわ',
                          '任しとき', 'ちなみに納期は死守な'][game.lineIdx % 4];
+  var tier = (!game.aniki && game.mode === 'play')
+    ? (game.mood > 55 ? 'high' : game.mood > 25 ? 'mid' : 'low') : 'high';
+  if (tier === 'low'){
+    txt = ['もう…', 'いい加減にせえよ', 'ほんまに聞いてる?', '……(黙り込む)'][game.lineIdx % 4];
+  }
   ctx.save();
   var x = 108, y = 108, w = 176, h = 46;
-  ctx.fillStyle = game.aniki ? 'rgba(255,215,94,.94)' : 'rgba(255,246,234,.94)';
+  ctx.fillStyle = game.aniki ? 'rgba(255,215,94,.94)'
+    : tier === 'low' ? 'rgba(255,150,150,.94)'
+    : tier === 'mid' ? 'rgba(255,214,163,.94)'
+    : 'rgba(255,246,234,.94)';
   rr(x, y, w, h, 12); ctx.fill();
   ctx.beginPath();
   ctx.moveTo(x - 1, y + 22); ctx.lineTo(x - 14, y + 30); ctx.lineTo(x - 1, y + 36);
@@ -1140,6 +1279,36 @@ function drawField(t){
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText('聞きました', x0 + LANE_W/2, y);
       ctx.restore();
+      continue;
+    }
+    if (n.type === 'special'){
+      var glow = 0.6 + 0.4*Math.sin(t*8);
+      ctx.save();
+      ctx.translate(x0 + LANE_W/2, y);
+      ctx.rotate(Math.PI/4 + Math.sin(t*3)*0.06);
+      ctx.shadowColor = '#ffd75e'; ctx.shadowBlur = 16*glow;
+      ctx.fillStyle = '#ffd75e';
+      ctx.fillRect(-16, -16, 32, 32);
+      ctx.strokeStyle = '#fff6ea'; ctx.lineWidth = 2;
+      ctx.strokeRect(-16, -16, 32, 32);
+      ctx.restore();
+      ctx.fillStyle = '#3a2c00';
+      ctx.font = '800 15px "Hiragino Kaku Gothic ProN",sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('★', x0 + LANE_W/2, y + 1);
+      continue;
+    }
+    if (n.type === 'chainbonus'){
+      var glow2 = 0.6 + 0.4*Math.sin(t*10);
+      ctx.save();
+      ctx.shadowColor = '#6fd3e8'; ctx.shadowBlur = 12*glow2;
+      ctx.fillStyle = '#6fd3e8';
+      ctx.beginPath(); ctx.arc(x0 + LANE_W/2, y, 14, 0, Math.PI*2); ctx.fill();
+      ctx.restore();
+      ctx.fillStyle = '#0a2430';
+      ctx.font = '900 15px "Hiragino Kaku Gothic ProN",sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('!', x0 + LANE_W/2, y + 1);
       continue;
     }
     drawNoteHead(x0, y, n.lane, LANE_LABEL[n.lane]);
@@ -1292,6 +1461,24 @@ function drawPinchVignette(){
   ctx.fillRect(0, 0, VW, VH);
 }
 
+function drawComboBreakPopup(){
+  var p = game.comboBreakPopup;
+  if (!p) return;
+  var age = now() - p.time;
+  if (age > 1.1) return;
+  var a = age < 0.15 ? age/0.15 : Math.max(0, 1 - (age-0.7)/0.4);
+  ctx.save();
+  ctx.globalAlpha = a;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#ff8a5c';
+  ctx.font = '900 26px "Hiragino Kaku Gothic ProN",sans-serif';
+  ctx.fillText('あちゃー…', VW/2, 360);
+  ctx.font = '700 13px "Hiragino Kaku Gothic ProN",sans-serif';
+  ctx.fillStyle = 'rgba(255,246,234,.8)';
+  ctx.fillText(p.combo + '連続、切れた', VW/2, 386);
+  ctx.restore();
+}
+
 function drawCostumeToast(){
   var age = now() - game.costumeToast;
   if (age < 0 || age > 2.5) return;
@@ -1383,6 +1570,7 @@ function frame(ts){
   }
 
   if (game.mode === 'count' && now() >= game.startTime) game.mode = 'play';
+  if (game.mode === 'sulk' && now() - game.sulkStart > 2.3) endStage(false);
   if (game.mode === 'play') updateNotes(dt);
 
   /* ピンチ演出: ambient shake + heartbeat kick as mood runs critically low */
@@ -1430,12 +1618,20 @@ function frame(ts){
   drawField(t);
   drawHud(t);
   drawPinchVignette();
+  drawComboBreakPopup();
   drawCostumeToast();
   ctx.restore();
 
   if (game.flash > 0){
     ctx.fillStyle = 'rgba(255,215,94,' + (game.flash * 0.4) + ')';
     ctx.fillRect(0, 0, VW, VH);
+  }
+  if (game.mode === 'sulk'){
+    var sulkAge2 = now() - game.sulkStart;
+    if (sulkAge2 > 1.75){
+      ctx.fillStyle = 'rgba(0,0,0,' + (Math.min(1, (sulkAge2 - 1.75) / 0.5) * 0.94) + ')';
+      ctx.fillRect(0, 0, VW, VH);
+    }
   }
 }
 requestAnimationFrame(frame);
